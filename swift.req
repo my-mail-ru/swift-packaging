@@ -1,0 +1,16 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+use JSON::XS;
+
+my ($builddir) = @ARGV;
+
+system("sed -i 's/embed.contains/!embed.contains/' $builddir/Package.swift") == 0
+	or die "Failed to patch Package.swift";
+my $data = decode_json(`swift package dump-package --input $builddir/Package.swift`);
+foreach my $dep (@{$data->{dependencies}}) {
+	print "swiftpm($dep->{url}) >= $dep->{version}->{lowerBound}\n";
+}
+
+exec('/usr/lib/rpm/find-requires')

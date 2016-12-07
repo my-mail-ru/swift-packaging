@@ -1,0 +1,10 @@
+#! /usr/bin/perl
+
+use strict;
+use warnings;
+
+my ($url, $version) = @ARGV;
+
+print "swiftpm($url) = $version\n";
+
+exec('/usr/lib/rpm/find-provides')
