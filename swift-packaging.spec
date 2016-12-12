@@ -1,5 +1,5 @@
 Name:       swift-packaging
-Version:    0.2
+Version:    0.3
 Release:    1%{?dist}
 Summary:    RPM Macros and Utilities for Swift Packaging
 BuildArch:  noarch
@@ -47,6 +47,8 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Mon Dec 12 2016 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.3-1
+- generating less trash when building swiftperl
 * Thu Dec 8 2016 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.2-1
 - better handling of various sources layout
 * Wed Dec 7 2016 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.1-1
