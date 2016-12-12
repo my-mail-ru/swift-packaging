@@ -20,7 +20,7 @@
 
 %_swift_build \
 	swift_package_name=`cd %{_builddir}/%{buildsubdir} && swift package dump-package | perl -MJSON::XS -lwe 'print decode_json(<>)->{name}'` ; \
-	%{?_swift_embed_package:sh -c 'swift build $* && swift build -Xswiftc -module-link-name=swift'$swift_package_name' $*' --}%{!?_swift_embed_package:swift build -Xswiftc -module-link-name=swift$swift_package_name}
+	sh -c 'swift build $* && swift build -Xswiftc -module-link-name=swift'$swift_package_name' $*' --
 %swift_build %{_swift_build} -c release -Xcc -D_GNU_SOURCE
 
 %swift_install \
