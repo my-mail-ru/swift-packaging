@@ -6,9 +6,9 @@ use JSON::XS;
 
 my ($builddir) = @ARGV;
 
-system("sed -i 's/embed.contains/!embed.contains/' $builddir/Package.swift") == 0
-	or die "Failed to patch Package.swift";
-my $data = decode_json(`cd $builddir && swift package dump-package`);
+system("sed 's/embed.contains/!embed.contains/' $builddir/Package.swift > $builddir/Package.swift.tmp") == 0
+	or die "Failed to patch Package.swift.tmp";
+my $data = decode_json(`cd $builddir && swift package dump-package --input Package.swift.tmp`);
 foreach my $dep (@{$data->{dependencies}}) {
 	print "swiftpm($dep->{url}) >= $dep->{version}->{lowerBound}\n";
 }
