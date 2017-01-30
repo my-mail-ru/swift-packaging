@@ -13,10 +13,14 @@
 %_find_swift_modules %{_rpmconfigdir}/find-swift-modules
 
 %swift_patch_package \
+	echo >> Package.swift ; \
 	echo 'let embed: Set<String> = [%{?_swift_embed_package}]' >> Package.swift ; \
 	echo 'package.dependencies = package.dependencies.filter { embed.contains($0.url) }' >> Package.swift ; \
 	swift_modules=`%_find_swift_modules -printf '"%s"' -F ', ' swift-library` ; \
-	echo 'products.append(Product(name: "swift" + package.name, type: .Library(.Dynamic), modules: ['${swift_modules}']))' >> Package.swift
+	echo >> Package.swift ; \
+	echo 'let productModules = Set(products.flatMap { $0.modules })' >> Package.swift ; \
+	echo 'let libsWithoutProduct = ['${swift_modules}'].filter { !productModules.contains($0) }' >> Package.swift ; \
+	echo 'if !libsWithoutProduct.isEmpty { products.append(Product(name: "swift" + package.name, type: .Library(.Dynamic), modules: libsWithoutProduct)) }' >> Package.swift
 
 %_swift_build \
 	swift_package_name=`cd %{_builddir}/%{buildsubdir} && swift package dump-package | perl -MJSON::XS -lwe 'print decode_json(<>)->{name}'` ; \
