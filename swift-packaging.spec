@@ -1,5 +1,5 @@
 Name:       swift-packaging
-Version:    0.3
+Version:    0.4
 Release:    1%{?dist}
 Summary:    RPM Macros and Utilities for Swift Packaging
 BuildArch:  noarch
@@ -47,6 +47,9 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Mon Jan 30 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.4-1
+- support running find-requires more then once
+- do not add to default dylib modules which have their own dylibs
 * Mon Dec 12 2016 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.3-1
 - generating less trash when building swiftperl
 * Thu Dec 8 2016 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.2-1
