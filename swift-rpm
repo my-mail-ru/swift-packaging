@@ -1,0 +1,86 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use JSON::XS;
+use Getopt::Long;
+
+my $package_file = 'Package.swift';
+my ($spec_file) = glob('*.spec');
+
+GetOptions(
+	'C|chdir=s' => sub { chdir $_[1] },
+	'package=s' => \$package_file,
+	'spec=s'    => \$spec_file,
+);
+
+my $package = decode_json(`swift package dump-package --input $package_file`);
+my $spec = do {
+	open my $f, '<', $spec_file or die "Failed to open spec file '$spec_file': $!";
+	local $/ = undef;
+	<$f>;
+};
+
+my ($command) = @ARGV;
+if ($command eq 'check') {
+	exit(check() ? 0 : 1);
+} elsif ($command eq 'update') {
+	exit(update() ? 0 : 1);
+} else {
+	die "Unknown command: $command\n";
+}
+
+sub check {
+	my $ok = 1;
+	my %spec_req;
+	while ($spec =~ /BuildRequires:\s*swiftpm\(([^)]+)\)(?:\s*>=\s*([\d\.]+))?/g) {
+		$spec_req{$1} = $2;
+	}
+	my %package_req = map { $_->{url} => $_->{version}->{lowerBound} } @{$package->{dependencies}};
+	my %urls = map { $_ => 1 } keys %spec_req, keys %package_req;
+	foreach my $url (sort keys %urls) {
+		if (!exists $spec_req{$url}) {
+			print "Missed dependency:\n+\tBuildRequires: swiftpm($url) >= $package_req{$url}\n";
+			$ok = 0;
+		} elsif (!exists $package_req{$url}) {
+			my $version = defined $spec_req{$url} ? " >= $spec_req{$url}" : "";
+			print "Redundant dependency:\n-\tBuildRequires: swiftpm($url)$version\n";
+			$ok = 0;
+		} elsif (!ver_eq($spec_req{$url}, $package_req{$url})) {
+			my $version = defined $spec_req{$url} ? " >= $spec_req{$url}" : "";
+			print "Invalid version:\n-\tBuildRequires: swiftpm($url)$version\n+\tBuildRequires: swiftpm($url) >= $package_req{$url}\n";
+			$ok = 0;
+		}
+	}
+	return $ok;
+}
+
+sub update {
+	my %package_req = map { $_->{url} => $_->{version}->{lowerBound} } @{$package->{dependencies}};
+	$spec =~ s/^(\s*BuildRequires:\s*swiftpm\(([^)]+)\)(?:\s*>=\s*([\d\.]+))?[^\n]*\n)/
+		my ($orig, $url, $version) = ($1, $2, $3);
+		!defined $package_req{$url} ? ""
+			: ver_eq($package_req{$url}, $version) ? $orig
+			: "BuildRequires: swiftpm($url) >= $package_req{$url}\n";
+	/mge;
+	1 while $spec =~ /^\s*BuildRequires:.*\n/mg;
+	my $here = $+[0] or die "Spec file does not contain any BuildRequires\n";
+	foreach my $url (reverse sort keys %package_req) {
+		unless ($spec =~ /BuildRequires:\s*swiftpm\(\Q$url\E\)/) {
+			substr $spec, $here, 0, "BuildRequires: swiftpm($url) >= $package_req{$url}\n";
+		}
+	}
+	open my $f, '>', $spec_file or die "Failed to open spec file '$spec_file' for writting: $!";
+	print $f $spec;
+	close $f;
+	return 1;
+}
+
+sub ver_eq {
+	my ($v1, $v2) = @_;
+	return 1 if !defined $v1 && !defined $v2;
+	return 0 if defined $v1 xor defined $v2;
+	$v1 =~ s/(?:\.0+)+$//;
+	$v2 =~ s/(?:\.0+)+$//;
+	return $v1 eq $v2;
+}

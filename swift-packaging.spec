@@ -1,5 +1,5 @@
 Name:       swift-packaging
-Version:    0.4
+Version:    0.5
 Release:    1%{?dist}
 Summary:    RPM Macros and Utilities for Swift Packaging
 BuildArch:  noarch
@@ -32,6 +32,7 @@ install -Dm0644 macros.swift %{buildroot}%{_sysconfdir}/rpm/macros.swift
 install -Dm0755 find-swift-modules %{buildroot}%{_rpmconfigdir}/find-swift-modules
 install -Dm0755 swift.prov %{buildroot}%{_rpmconfigdir}/swift.prov
 install -Dm0755 swift.req %{buildroot}%{_rpmconfigdir}/swift.req
+install -Dm0755 swift-rpm %{buildroot}%{_bindir}/swift-rpm
 
 
 %clean
@@ -44,9 +45,12 @@ rm -rf %{buildroot}
 %{_rpmconfigdir}/find-swift-modules
 %{_rpmconfigdir}/swift.prov
 %{_rpmconfigdir}/swift.req
+%{_bindir}/swift-rpm
 
 
 %changelog
+* Tue Jan 31 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.5-1
+- swift-rpm
 * Mon Jan 30 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.4-1
 - support running find-requires more then once
 - do not add to default dylib modules which have their own dylibs
