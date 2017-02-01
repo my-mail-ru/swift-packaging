@@ -40,15 +40,15 @@ sub check {
 	my %urls = map { $_ => 1 } keys %spec_req, keys %package_req;
 	foreach my $url (sort keys %urls) {
 		if (!exists $spec_req{$url}) {
-			print "Missed dependency:\n+\tBuildRequires: swiftpm($url) >= $package_req{$url}\n";
+			print "Missed dependency:\n+\t" . build_requires($url, $package_req{$url});
 			$ok = 0;
 		} elsif (!exists $package_req{$url}) {
-			my $version = defined $spec_req{$url} ? " >= $spec_req{$url}" : "";
-			print "Redundant dependency:\n-\tBuildRequires: swiftpm($url)$version\n";
+			print "Redundant dependency:\n-\t" . build_requires($url, $spec_req{$url});
 			$ok = 0;
 		} elsif (!ver_eq($spec_req{$url}, $package_req{$url})) {
-			my $version = defined $spec_req{$url} ? " >= $spec_req{$url}" : "";
-			print "Invalid version:\n-\tBuildRequires: swiftpm($url)$version\n+\tBuildRequires: swiftpm($url) >= $package_req{$url}\n";
+			my $old = build_requires($url, $spec_req{$url});
+			my $new = build_requires($url, $package_req{$url});
+			print "Invalid version:\n-\t$old+\t$new";
 			$ok = 0;
 		}
 	}
@@ -61,13 +61,13 @@ sub update {
 		my ($orig, $url, $version) = ($1, $2, $3);
 		!defined $package_req{$url} ? ""
 			: ver_eq($package_req{$url}, $version) ? $orig
-			: "BuildRequires: swiftpm($url) >= $package_req{$url}\n";
+			: build_requires($url, $package_req{$url});
 	/mge;
 	1 while $spec =~ /^\s*BuildRequires:.*\n/mg;
 	my $here = $+[0] or die "Spec file does not contain any BuildRequires\n";
 	foreach my $url (reverse sort keys %package_req) {
 		unless ($spec =~ /BuildRequires:\s*swiftpm\(\Q$url\E\)/) {
-			substr $spec, $here, 0, "BuildRequires: swiftpm($url) >= $package_req{$url}\n";
+			substr $spec, $here, 0, build_requires($url, $package_req{$url});
 		}
 	}
 	open my $f, '>', $spec_file or die "Failed to open spec file '$spec_file' for writting: $!";
@@ -78,9 +78,15 @@ sub update {
 
 sub ver_eq {
 	my ($v1, $v2) = @_;
-	return 1 if !defined $v1 && !defined $v2;
-	return 0 if defined $v1 xor defined $v2;
+	$v1 = 0 unless defined $v1;
+	$v2 = 0 unless defined $v2;
 	$v1 =~ s/(?:\.0+)+$//;
 	$v2 =~ s/(?:\.0+)+$//;
 	return $v1 eq $v2;
+}
+
+sub build_requires {
+	my ($url, $version) = @_;
+	my $vstr = ver_eq($version, 0) ? "" : " >= $version";
+	return "BuildRequires: swiftpm($url)$vstr\n";
 }

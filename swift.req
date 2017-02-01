@@ -3,14 +3,38 @@
 use strict;
 use warnings;
 use JSON::XS;
+use IPC::Open2;
 
-my ($builddir) = @ARGV;
+my $pid = open2(my $out, my $in, '/usr/lib/rpm/find-requires');
 
-system("sed 's/embed.contains/!embed.contains/' $builddir/Package.swift > $builddir/Package.tmp.swift") == 0
-	or die "Failed to patch Package.tmp.swift";
-my $data = decode_json(`cd $builddir && swift package dump-package --input Package.tmp.swift`);
-foreach my $dep (@{$data->{dependencies}}) {
-	print "swiftpm($dep->{url}) >= $dep->{version}->{lowerBound}\n";
+my $has_modules;
+while (<STDIN>) {
+	print $in $_;
+	$has_modules = 1 if /\.swiftmodule$/;
 }
+close $in;
 
-exec('/usr/lib/rpm/find-requires')
+my $reqpkgs = '';
+while (<$out>) {
+	print;
+	chomp;
+	$reqpkgs .= `rpm -q --whatprovides '$_' --queryformat '%{NAME} %{VERSION}\n'`;
+}
+close $out;
+
+waitpid($pid, 0);
+
+my %requires;
+$requires{$1} = $2 while $reqpkgs =~ /^(swift[\w-]*) ([\d\.]+)$/mg;
+print "$_ >= $requires{$_}\n" foreach sort keys %requires;
+
+if ($has_modules) {
+	my ($builddir) = @ARGV;
+
+	system("sed 's/embed.contains/!embed.contains/' $builddir/Package.swift > $builddir/Package.tmp.swift") == 0
+		or die "Failed to patch Package.tmp.swift";
+	my $data = decode_json(`cd $builddir && swift package dump-package --input Package.tmp.swift`);
+	foreach my $dep (@{$data->{dependencies}}) {
+		print "swiftpm($dep->{url}) >= $dep->{version}->{lowerBound}\n";
+	}
+}

@@ -1,5 +1,5 @@
 Name:       swift-packaging
-Version:    0.5
+Version:    0.6
 Release:    1%{?dist}
 Summary:    RPM Macros and Utilities for Swift Packaging
 BuildArch:  noarch
@@ -49,6 +49,8 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Wed Feb 1 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.6-1
+- swiftpm() is about modules only not libraries
 * Tue Jan 31 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.5-1
 - swift-rpm
 * Mon Jan 30 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.4-1
