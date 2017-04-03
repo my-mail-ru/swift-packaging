@@ -23,7 +23,7 @@
 	echo 'if !libsWithoutProduct.isEmpty { products.append(Product(name: "swift" + package.name, type: .Library(.Dynamic), modules: libsWithoutProduct)) }' >> Package.swift
 
 %_swift_build \
-	swift_package_name=`cd %{_builddir}/%{buildsubdir} && swift package dump-package | perl -MJSON::XS -lwe 'print decode_json(<>)->{name}'` ; \
+	swift_package_name=`cd %{_builddir}/%{buildsubdir} && perl -MJSON::XS -lwe 'print decode_json(qx/swift package dump-package/)->{name}'` ; \
 	sh -c 'swift build $* && swift build -Xswiftc -module-link-name=swift'$swift_package_name' $*' --
 %swift_build %{_swift_build} -c release -Xcc -D_GNU_SOURCE
 
