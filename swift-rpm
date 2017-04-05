@@ -5,16 +5,14 @@ use warnings;
 use JSON::XS;
 use Getopt::Long;
 
-my $package_file = 'Package.swift';
 my ($spec_file) = glob('*.spec');
 
 GetOptions(
 	'C|chdir=s' => sub { chdir $_[1] },
-	'package=s' => \$package_file,
 	'spec=s'    => \$spec_file,
 );
 
-my $package = decode_json(`swift package dump-package --input $package_file`);
+my $package = decode_json(`swift package dump-package`);
 my $spec = do {
 	open my $f, '<', $spec_file or die "Failed to open spec file '$spec_file': $!";
 	local $/ = undef;
