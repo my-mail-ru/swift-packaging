@@ -30,21 +30,8 @@ print "$_ >= $requires{$_}\n" foreach sort keys %requires;
 
 if ($has_modules) {
 	my ($builddir) = @ARGV;
-
-	local $/ = undef;
-	open my $f, '<', "$builddir/Package.swift" or die "Failed to open Package.swift";
-	my $pkg = <$f>;
-	close $f;
-	open $f, '>', "$builddir/Package.swift" or die "Failed to open Package.swift";
-	my $pkgtmp = $pkg;
-	$pkgtmp =~ s/embed\.contains/!embed.contains/g;
-	print $f $pkgtmp;
-	close $f;
 	my $data = decode_json(`cd $builddir && swift package dump-package`);
 	foreach my $dep (@{$data->{dependencies}}) {
 		print "swiftpm($dep->{url}) >= $dep->{version}->{lowerBound}\n";
 	}
-	open $f, '>', "$builddir/Package.swift" or die "Failed to open Package.swift";
-	print $f $pkg;
-	close $f;
 }

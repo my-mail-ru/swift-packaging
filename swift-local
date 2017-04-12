@@ -1,0 +1,515 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use Cwd;
+use File::Basename;
+use File::Copy;
+use File::Find;
+use File::Path qw/make_path/;
+use File::Spec;
+use Getopt::Long qw/:config pass_through require_order/;
+use JSON::XS;
+use Term::ANSIColor;
+use YAML::Node;
+use YAML;
+
+if ($0 =~ /swift-build-tool$/) {
+	swift_build_tool();
+	exit;
+}
+
+my $MN = color('magenta');
+my $SO = color('green');
+my $SW = color('blue');
+my $PM = color('cyan');
+my $RS = color('reset');
+
+my $localpath = $ENV{SWIFT_LOCAL_PATH} || "$ENV{HOME}/swift.local";
+my $buildpath;
+my $perl5lib;
+
+GetOptions(
+	help => sub {
+		print <<HELP;
+OVERVIEW: Build and install Swift modules at custom path
+
+USAGE: swift local [options] subcommand
+
+OPTIONS:
+  --build-path            Build prefix
+  --install-path          Install prefix
+  --perl5lib              Perl5 libraries install prefix
+
+SUBCOMMANDS:
+  build                   Build current package or one of its dependencies in editable mode
+  clean                   Delete installed files and build artifacts
+  exec                    Execute swift code
+  export                  Print environment variables required to use installed modules
+  install                 Install current package or one of its dependencies in editable mode
+  install-with-deps       Build & install current package including its dependencies
+  run                     Run command with appropriate environment variables
+  swift                   Run swift with customized header and library paths
+HELP
+		exit;
+	},
+	'install-path=s' => \$localpath,
+	'build-path=s'   => \$buildpath,
+	'perl5lib=s'     => \$perl5lib,
+);
+
+$buildpath ||= "$localpath/.build";
+my $buildbin = "$buildpath/.shim/bin";
+my $buildlib = "$buildpath/.shim/lib/swift";
+
+my $bindir = "$localpath/bin";
+my $libdir = "$localpath/lib";
+my $swiftdir = "$libdir/swift";
+my $swiftlibdir = "$swiftdir/linux";
+my $swiftmoddir = "$swiftlibdir/x86_64";
+$perl5lib ||= "$libdir/perl5";
+
+my $command = shift @ARGV;
+if ($command eq 'build') {
+	build();
+} elsif ($command eq 'install') {
+	install();
+} elsif ($command eq 'install-with-deps') {
+	install_with_deps();
+} elsif ($command eq 'clean') {
+	my $type = 'all';
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Delete installed files and build artifacts
+
+USAGE: swift local clean [options]
+
+OPTIONS:
+  --type                  Directories to clean (install|build|all) [default: all]
+END
+			exit;
+		},
+	);
+	if ($type ne 'install') {
+		unless (system("rm -rf $buildpath") == 0) {
+			die "Failed to rm -rf $buildpath";
+		}
+	}
+	if ($type ne 'build') {
+		unless (system("rm -rf $localpath") == 0) {
+			die "Failed to rm -rf $localpath";
+		}
+	}
+} elsif ($command eq 'export') {
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Print environment variables required to use installed modules
+
+USAGE: swift local export
+END
+			exit;
+		},
+	);
+	print "export PATH=$bindir:\$PATH\n";
+	print "export LD_LIBRARY_PATH=$swiftlibdir:$libdir:\$LD_LIBRARY_PATH\n";
+	print "export PERL5LIB=$perl5lib:\$PERL5LIB\n";
+} elsif ($command eq 'run') {
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Run command with appropriate environment variables
+
+USAGE: swift local run [command] [command arguments]
+END
+			exit;
+		},
+	);
+	$ENV{PATH} = $ENV{PATH} ? "$bindir:$ENV{PATH}" : $bindir;
+	$ENV{LD_LIBRARY_PATH} = $ENV{LD_LIBRARY_PATH} ? "$swiftlibdir:$libdir:$ENV{LD_LIBRARY_PATH}" : "$swiftlibdir:$libdir";
+	$ENV{PERL5LIB} = $ENV{PERL5LIB} ? "$perl5lib:$ENV{PERL5LIB}" : $perl5lib;
+	exec @ARGV;
+} elsif ($command eq 'swift') {
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Run swift with customized header and library paths
+
+USAGE: swift local swift [swift arguments]
+END
+			exit;
+		},
+	);
+	exec 'swift', "-I$swiftdir", "-I$swiftmoddir", "-L$swiftlibdir", @ARGV;
+} elsif ($command eq 'exec') {
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Execute swift code
+
+USAGE: swift local exec [swift code]
+END
+			exit;
+		},
+	);
+	open my $in, '|-', "swift -I$swiftdir -I$swiftmoddir -L$swiftlibdir -" or die "Failed to run swift";
+	print $in @ARGV;
+	close $in;
+} else {
+	die "Unknown command: $command\n";
+}
+
+sub prepare_buildpath {
+	make_path($buildbin, $buildlib);
+
+	-l "$buildbin/swiftc" or symlink "/usr/bin/swiftc", "$buildbin/swiftc"
+		or die "Failed to symlink swiftc";
+	-l "$buildbin/swift-build" or symlink "/usr/bin/swift-build", "$buildbin/swift-build"
+		or die "Failed to symlink swift-build";
+	-l "$buildbin/swift-build-tool" or symlink $0, "$buildbin/swift-build-tool"
+		or die "Failed to symlink swift-build-tool";
+
+	-l "$buildlib/pm" or symlink "/usr/lib/swift/pm", "$buildlib/pm"
+		or die "Failed to symlink $buildlib/pm: $!";
+
+	return;
+}
+
+sub prepare_installpath {
+	make_path($localpath, $buildpath, $bindir, $libdir, $swiftdir, $swiftlibdir, $swiftmoddir, $perl5lib);
+	return;
+}
+
+sub builddir {
+	my ($path) = @_;
+	return $buildpath . '/' . basename($path);
+}
+
+sub describe {
+	my ($dir) = @_;
+	return decode_json(`cd $dir && swift package describe --type=json`);
+}
+
+sub build {
+	my $install;
+	my $path = cwd();
+	my $config = 'debug';
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Build current package or one of its dependencies in editable mode
+
+USAGE: swift local build [options] [swift build options]
+
+OPTIONS:
+  --package               Name of editable package [default: current package]
+  --gnu                   Add -D_GNU_SOURCE to arguments
+  --install               Install built module
+  --configuration, -c     Build with configuration (debug|release) [default: debug]
+END
+			exit;
+		},
+		'package=s' => sub {
+			$path .= "/Packages/$_[1]";
+			die "Module $_[1] is not in editable mode\n" unless -d $path;
+		},
+		gnu => sub {
+			push @ARGV, '-Xcc', '-D_GNU_SOURCE';
+		},
+		install => \$install,
+		'configuration|c=s' => \$config,
+	);
+	push @ARGV, '-c', $config;
+	prepare_buildpath();
+	prepare_installpath() if $install;
+	my $package = prepare_builddir($path);
+	build_package($package);
+	install_package($package, $config, 'any') if $install;
+	return;
+}
+
+sub install {
+	my $path = cwd();
+	my $config = 'debug';
+	my $type = 'any';
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Install current package or one of its dependencies in editable mode
+
+USAGE: swift local install [options]
+
+OPTIONS:
+  --package               Name of editable package [default: current package]
+  --configuration, -c     Install binaries built with configuration (debug|release) [default: debug]
+  --type                  Install only specified file types (runtime|devel|any) [default: any]
+END
+			exit;
+		},
+		'package=s' => sub {
+			$path .= "/Packages/$_[1]";
+			die "Module $_[1] is not in editable mode\n" unless -d $path;
+		},
+		'configuration|c=s' => \$config,
+		'type=s' => \$type,
+	);
+	prepare_installpath();
+	my $builddir = builddir($path);
+	die "Module is not built yet\n" unless -d $builddir;
+	my $package = describe($builddir);
+	install_package($package, $config, $type);
+	return;
+}
+
+sub install_with_deps {
+	my $config = 'debug';
+	GetOptions(
+		help => sub {
+			print <<END;
+OVERVIEW: Build & install current package with all its dependencies
+
+USAGE: swift local install-with-deps [options] [swift build options]
+
+OPTIONS:
+  --gnu                   Add -D_GNU_SOURCE to arguments
+  --configuration, -c     Build with configuration (debug|release) [default: debug]
+END
+			exit;
+		},
+		gnu => sub {
+			push @ARGV, '-Xcc', '-D_GNU_SOURCE';
+		},
+		'configuration|c=s' => \$config,
+	);
+	push @ARGV, '-c', $config;
+	prepare_buildpath();
+	prepare_installpath();
+	my %done;
+	my $deps = decode_json(`swift package show-dependencies --format=json`);
+	_install_with_deps($deps, $config, \%done);
+	return;
+}
+
+sub _install_with_deps {
+	my ($pkg, $config, $done) = @_;
+	return if $done->{$pkg->{path}};
+	foreach my $dep (@{$pkg->{dependencies}}) {
+		_install_with_deps($dep, $config, $done);
+	}
+	my $package = prepare_builddir($pkg->{path});
+	build_package($package);
+	install_package($package, $config, 'any');
+	$done->{$pkg->{path}} = 1;
+	return;
+}
+
+sub prepare_builddir {
+	my ($path) = @_;
+
+	my $builddir = builddir($path);
+	return describe($builddir) if -d $builddir;
+
+	mkdir $builddir or die "Failed to mkdir $builddir";
+
+	opendir my $dir, $path or die "Failed to opendir $path";
+	while (my $filename = readdir $dir) {
+		next if $filename =~ /^(\.|Package\.swift$)/;
+		-e "$builddir/$filename" and unlink "$builddir/$filename";
+		symlink "$path/$filename", "$builddir/$filename" or die "Failed to symlink $filename";
+	}
+	closedir $dir;
+
+	open my $mypkg, '>', "$builddir/Package.swift" or die "Filed to open $builddir/Package.swift";
+	open my $origpkg, '<', "$path/Package.swift" or die "Failed to open $path/Package.swift";
+	print $mypkg $_ while <$origpkg>;
+	close $origpkg;
+	print $mypkg qq/package.dependencies = []\n/;
+	close $mypkg;
+
+	my $package = describe($builddir);
+	my @swift_modules = grep { $_->{type} eq 'library' && $_->{module_type} eq 'SwiftModule' && !$_->{is_test} } @{$package->{modules}};
+	if (@swift_modules) {
+		open my $mypkg, '>>', "$builddir/Package.swift" or die "Filed to open $builddir/Package.swift";
+		my $sm = join ', ', map qq/"$_->{name}"/, @swift_modules;
+		print $mypkg qq/let productModules = Set(products.flatMap { \$0.modules })\n/;
+		print $mypkg qq/for module in [$sm].filter({ !productModules.contains(\$0) }) {\n/;
+		print $mypkg qq/\tproducts.append(Product(name: "swift" + module, type: .Library(.Dynamic), modules: module))\n/;
+		print $mypkg qq/}\n/;
+		close $mypkg;
+	}
+
+	return $package;
+}
+
+sub build_package {
+	my ($package) = @_;
+
+	print "Building $MN$package->{name}$RS\n";
+	my $builddir = builddir($package->{path});
+
+	my $swift_build = File::Spec->rel2abs("$buildbin/swift-build");
+	unless (@{$package->{modules}} == 1 && $package->{modules}->[0]->{type} eq 'system-module') {
+		unless (system("cd $builddir && $swift_build -Xswiftc -I$swiftdir -Xswiftc -I$swiftmoddir -Xlinker -L$swiftlibdir @ARGV") == 0) {
+			die "Failed to swift build";
+		}
+	}
+
+	return;
+}
+
+sub install_package {
+	my ($package, $config, $type) = @_;
+	if (@{$package->{modules}} == 1 && $package->{modules}->[0]->{type} eq 'system-module') {
+		return if $type eq 'runtime';
+		my $module = $package->{modules}->[0];
+		install_clang_module($module->{name}, $module->{path});
+	} else {
+		install_swift_package($package, $config, $type);
+	}
+	return;
+}
+
+sub install_swift_package {
+	my ($package, $config, $type) = @_;
+
+	my $builddir = "$package->{path}/.build/$config";
+
+	my %outputs;
+	my @modules;
+	my $yaml = YAML::LoadFile("$builddir.yaml");
+	my %main = map { $_ => 1 } @{$yaml->{targets}->{main}};
+	while (my ($name, $command) = each %{$yaml->{commands}}) {
+		if ($name =~ /^<(.*)\.(dylib|exe)>$/) {
+			my $target = $2;
+			$target = 'perl' if $1 =~ /^\/perl5\//;
+			push @{$outputs{$target}}, @{$command->{outputs}};
+		} elsif ($name =~ /^<.*\.module>$/) {
+			my $file = $command->{'module-output-path'};
+			push @modules, $file if $main{$file} && $command->{'is-library'} eq 'true';
+		}
+	}
+
+	if ($type ne 'devel') {
+		foreach my $target (qw/exe dylib/) {
+			my $targetdir = $target eq 'dylib' ? $swiftlibdir : $bindir;
+			foreach my $file (sort @{$outputs{$target} || []}) {
+				my $name = basename($file);
+				print "Install $targetdir/$SO$name$RS\n";
+				copy($file, "$targetdir/$name") or die "Failed to install $name: $!";
+				chmod 0755, "$targetdir/$name" or die "Failed to chmod $name: $!";
+			}
+		}
+	}
+
+	if ($type ne 'runtime') {
+		foreach my $file (@modules) {
+			my $name = basename($file);
+			print "Install $swiftmoddir/$SW$name$RS\n";
+			copy($file, "$swiftmoddir/$name") or die "Failed to install $name: $!";
+			$file =~ s/\.swiftmodule$/.swiftdoc/;
+			$name = basename($file);
+			print "Install $swiftmoddir/$SW$name$RS\n";
+			copy($file, "$swiftmoddir/$name") or die "Failed to install $name: $!";
+		}
+
+		foreach my $module (@{$package->{modules}}) {
+			next unless $module->{type} eq 'library' && $module->{module_type} eq 'ClangModule';
+			install_clang_module($module->{name}, "$module->{path}/include");
+		}
+	}
+
+	if ($type ne 'devel') {
+		install_perl($package, $outputs{perl}, $config) if $outputs{perl};
+	}
+
+	return;
+}
+
+sub install_clang_module {
+	my ($modname, $include) = @_;
+	-d "$swiftdir/$modname" or mkdir "$swiftdir/$modname"
+		or die "Failed to mkdir $swiftdir/$modname: $!";
+	foreach my $file (sort <$include/{module.modulemap,*.h}>) {
+		my $filename = basename($file);
+		print "Install $swiftdir/$SW$modname/$filename$RS\n";
+		copy($file, "$swiftdir/$modname/$filename") or die "Failed to install $modname/$filename: $!";
+	}
+	return;
+}
+
+sub install_perl {
+	my ($package, $outputs, $config) = @_;
+	my $builddir = "$package->{path}/.build/$config";
+
+	find(sub {
+		if (/\.pm$/) {
+			open my $in, '<', $_ or die "Failed to open $_";
+			my ($modname) = <$in> =~ /^package (.+);$/;
+			close $in;
+			die "Failed to find package name of $File::Find::name" unless $modname;
+			my @modparts = split /::/, $modname;
+			my $filename = pop(@modparts) . '.pm';
+			my $name = join '/', @modparts, $filename;
+			make_path(dirname("$perl5lib/$name"));
+			print "Install $perl5lib/$PM$name$RS\n";
+			copy($File::Find::name, "$perl5lib/$name") or die "Failed to install $perl5lib/$name";
+		}
+	}, "$package->{path}/Sources/");
+
+	foreach my $file (sort @$outputs) {
+		my $name = $file;
+		$name =~ s/^\Q$builddir\/lib\/perl5\/\E//;
+		make_path(dirname("$perl5lib/$name"));
+		print "Install $perl5lib/$PM$name$RS\n";
+		copy($file, "$perl5lib/$name") or die "Failed to install $name";
+		chmod 0755, "$perl5lib/$name" or die "Failed to chmod $name";
+	}
+
+	return;
+}
+
+sub swift_build_tool {
+	GetOptions('f=s' => \(my $file));
+	push @ARGV, '-f', $file;
+
+	my $yaml = YAML::LoadFile($file);
+
+	my @dylibs;
+	while (my ($name, $dylib) = each %{$yaml->{commands}}) {
+		next unless $dylib->{tool} eq 'shell';
+		my ($linkname, $modulename) = $name =~ /^<(swift(.*))\.dylib>$/;
+		next unless $linkname;
+		my $module = $yaml->{commands}->{"<$modulename.module>"} or next;
+		next unless $module->{tool} eq 'swift-compiler' && $module->{'is-library'} eq 'true';
+		my %inputs = map { $_ => 1 } @{$dylib->{inputs}};
+		next if grep !$inputs{$_}, @{$module->{objects}};
+		push @{$module->{'other-args'}}, '-module-link-name', $linkname;
+		push @dylibs, {
+			module  => $module,
+			dylib   => $dylib,
+			objects => { map { $_ => 1 } @{$module->{objects}} },
+		};
+	}
+
+	while (my ($name, $link) = each %{$yaml->{commands}}) {
+		next unless $link->{tool} eq 'shell';
+		foreach my $dylib (@dylibs) {
+			next if $dylib->{dylib} == $link;
+			my $exists;
+			@{$link->{inputs}} = map { $dylib->{objects}->{$_} ? do { $exists++; () } : $_ } @{$link->{inputs}};
+			if ($exists) {
+				push @{$link->{inputs}}, @{$dylib->{dylib}->{outputs}};
+				@{$link->{args}} = grep !$dylib->{objects}->{$_}, @{$link->{args}};
+			}
+		}
+	}
+
+	YAML::Bless($yaml)->keys([qw/client tools targets default commands/]);
+	foreach my $module (values %{$yaml->{commands}}) {
+		YAML::Bless($module)->keys([qw/tool/, grep { $_ ne 'tool' } keys %$module]);
+	}
+	YAML::DumpFile($file, $yaml);
+
+	exec { '/usr/bin/swift-build-tool' } $0, @ARGV;
+}

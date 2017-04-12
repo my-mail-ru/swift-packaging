@@ -8,42 +8,24 @@
 %global swift_package_url %%(echo %%{url}.git | sed 's#^https\\\\?://#git@#; s#/#:#')
 }
 
-%swift_embed_package() %{expand:%global _swift_embed_package %{?_swift_embed_package:%{_swift_embed_package}, }\"%{1}\"}
+%swift_patch_package true
 
-%_find_swift_modules %{_rpmconfigdir}/find-swift-modules
+%swift_build swift local --build-path=.rpmbuild \\\
+	--install-path=%{buildroot}%{_prefix} \\\
+	--perl5lib=%{buildroot}%{perl_vendorarch} \\\
+	build -c release -Xcc -D_GNU_SOURCE
 
-%swift_patch_package \
-	echo >> Package.swift ; \
-	echo 'let embed: Set<String> = [%{?_swift_embed_package}]' >> Package.swift ; \
-	echo 'package.dependencies = package.dependencies.filter { embed.contains($0.url) }' >> Package.swift ; \
-	swift_modules=`%_find_swift_modules -printf '"%s"' -F ', ' swift-library` ; \
-	echo >> Package.swift ; \
-	echo 'let productModules = Set(products.flatMap { $0.modules })' >> Package.swift ; \
-	echo 'let libsWithoutProduct = ['${swift_modules}'].filter { !productModules.contains($0) }' >> Package.swift ; \
-	echo 'if !libsWithoutProduct.isEmpty { products.append(Product(name: "swift" + package.name, type: .Library(.Dynamic), modules: libsWithoutProduct)) }' >> Package.swift
+%swift_install swift local \\\
+	--build-path=.rpmbuild \\\
+	--install-path=%{buildroot}%{_prefix} \\\
+	--perl5lib=%{buildroot}%{perl_vendorarch} \\\
+	install -c release --type runtime
 
-%_swift_build \
-	swift_package_name=`cd %{_builddir}/%{buildsubdir} && perl -MJSON::XS -lwe 'print decode_json(qx/swift package dump-package/)->{name}'` ; \
-	sh -c 'swift build $* && swift build -Xswiftc -module-link-name=swift'$swift_package_name' $*' --
-%swift_build %{_swift_build} -c release -Xcc -D_GNU_SOURCE
-
-%swift_install \
-	mkdir -p %{buildroot}%{swift_libdir} ; \
-	cp .build/release/*.so %{buildroot}%{swift_libdir}/ ; \
-	mkdir -p %{buildroot}%{swift_bindir} ; \
-	for m in `%_find_swift_modules swift-executable`; do \
-		cp .build/release/$m %{buildroot}%{swift_bindir}/ ; \
-	done
-
-%swift_install_devel \
-	mkdir -p %{buildroot}%{swift_moduledir} ; \
-	for m in `%_find_swift_modules swift-library`; do \
-		cp .build/release/$m.{swiftmodule,swiftdoc} %{buildroot}%{swift_moduledir}/ ; \
-	done ; \
-	for m in `%_find_swift_modules clang-library`; do \
-		mkdir -p %{buildroot}%{swift_clangmoduleroot}/$m/ ; \
-		cp Sources/$m/include/* %{buildroot}%{swift_clangmoduleroot}/$m/ ; \
-	done
+%swift_install_devel swift local \\\
+	--build-path=.rpmbuild \\\
+	--install-path=%{buildroot}%{_prefix} \\\
+	--perl5lib=%{buildroot}%{perl_vendorarch} \\\
+	install -c release --type devel
 
 # macro to invoke the Swift provides and requires generators
 %swift_find_provides_and_requires %{expand: \
