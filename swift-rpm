@@ -12,7 +12,17 @@ GetOptions(
 	'spec=s'    => \$spec_file,
 );
 
-my $package = decode_json(`swift package dump-package`);
+my $tools_version = `swift package tools-version`;
+chomp $tools_version;
+$tools_version =~ s/(?:\.0+)+$//;
+my $major = $tools_version =~ /^(\d+)/ ? $1 : 3;
+my $requirement_key = $major >= 4 ? 'requirement' : 'version';
+
+my $package = do {
+	my $json = `swift package dump-package`;
+	$json =~ s/^.*?(?=\{)//s;
+	decode_json($json);
+};
 my $spec = do {
 	open my $f, '<', $spec_file or die "Failed to open spec file '$spec_file': $!";
 	local $/ = undef;
@@ -30,11 +40,21 @@ if ($command eq 'check') {
 
 sub check {
 	my $ok = 1;
+	if ($spec =~ /^\s*BuildRequires:\s*swift(?:\s*>=\s*([\d\.]+))?\s*$/m) {
+		my $spec_ver = $1;
+		unless (ver_eq($spec_ver, $tools_version)) {
+			print "Invalid version\n-\tBuildRequires: swift >= $spec_ver\n+\tBuildRequires: swift >= $tools_version\n";
+			$ok = 0;
+		}
+	} else {
+		print "Missed dependency:\n+\tBuildRequires: swift >= $tools_version\n";
+		$ok = 0;
+	}
 	my %spec_req;
 	while ($spec =~ /BuildRequires:\s*swiftpm\(([^)]+)\)(?:\s*>=\s*([\d\.]+))?/g) {
 		$spec_req{$1} = $2;
 	}
-	my %package_req = map { $_->{url} => $_->{version}->{lowerBound} } @{$package->{dependencies}};
+	my %package_req = map { $_->{url} => $_->{$requirement_key}->{lowerBound} } @{$package->{dependencies}};
 	my %urls = map { $_ => 1 } keys %spec_req, keys %package_req;
 	foreach my $url (sort keys %urls) {
 		if (!exists $spec_req{$url}) {
@@ -54,7 +74,11 @@ sub check {
 }
 
 sub update {
-	my %package_req = map { $_->{url} => $_->{version}->{lowerBound} } @{$package->{dependencies}};
+	$spec =~ s/^([ \t]*BuildRequires:\s*swift(?:\s*>=\s*([\d\.]+))?)$/
+		my ($orig, $version) = ($1, $2);
+		ver_eq($tools_version, $version) ? $orig : "BuildRequires: swift >= $tools_version"
+	/me;
+	my %package_req = map { $_->{url} => $_->{$requirement_key}->{lowerBound} } @{$package->{dependencies}};
 	$spec =~ s/^(\s*BuildRequires:\s*swiftpm\(([^)]+)\)(?:\s*>=\s*([\d\.]+))?[^\n]*\n)/
 		my ($orig, $url, $version) = ($1, $2, $3);
 		!defined $package_req{$url} ? ""
@@ -63,6 +87,7 @@ sub update {
 	/mge;
 	1 while $spec =~ /^\s*BuildRequires:.*\n/mg;
 	my $here = $+[0] or die "Spec file does not contain any BuildRequires\n";
+	substr $spec, $here, 0, "BuildRequires: swift >= $tools_version\n" unless $spec =~ /BuildRequires: swift\s/;
 	foreach my $url (reverse sort keys %package_req) {
 		unless ($spec =~ /BuildRequires:\s*swiftpm\(\Q$url\E\)/) {
 			substr $spec, $here, 0, build_requires($url, $package_req{$url});

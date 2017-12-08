@@ -1,5 +1,5 @@
 Name:       swift-packaging
-Version:    0.8
+Version:    0.9
 Release:    1%{?dist}
 Summary:    RPM Macros and Utilities for Swift Packaging
 BuildArch:  noarch
@@ -50,6 +50,8 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Thu Dec 7 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.9-1
+- Swift 4.0
 * Wed Apr 12 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.8-1
 - swift-local tool
 * Mon Apr 3 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.7-1
