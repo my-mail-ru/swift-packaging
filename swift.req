@@ -31,12 +31,14 @@ print "$_ >= $requires{$_}\n" foreach sort keys %requires;
 if ($has_modules) {
 	my ($builddir) = @ARGV;
 	my $tools_version = `cd $builddir && swift package tools-version`;
-	my $major = $tools_version =~ /^(\d+)/ ? $1 : 3;
-	my $requirement_key = $major >= 4 ? 'requirement' : 'version';
 	my $json = `cd $builddir && swift package dump-package`;
 	$json =~ s/^.*?(?=\{)//s;
 	my $data = decode_json($json);
 	foreach my $dep (@{$data->{dependencies}}) {
-		print "swiftpm($dep->{url}) >= $dep->{$requirement_key}->{lowerBound}\n";
+		if (my $exact = $dep->{requirement}->{exact}) {
+			print "swiftpm($dep->{url}) = $exact->[0]\n";
+		} elsif (my $range = $dep->{requirement}->{range}) {
+			print "swiftpm($dep->{url}) >= $range->[0]->{lowerBound}\n";
+		}
 	}
 }

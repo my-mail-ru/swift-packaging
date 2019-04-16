@@ -15,8 +15,6 @@ GetOptions(
 my $tools_version = `swift package tools-version`;
 chomp $tools_version;
 $tools_version =~ s/(?:\.0+)+$//;
-my $major = $tools_version =~ /^(\d+)/ ? $1 : 3;
-my $requirement_key = $major >= 4 ? 'requirement' : 'version';
 
 my $package = do {
 	my $json = `swift package dump-package`;
@@ -54,7 +52,7 @@ sub check {
 	while ($spec =~ /BuildRequires:\s*swiftpm\(([^)]+)\)(?:\s*>=\s*([\d\.]+))?/g) {
 		$spec_req{$1} = $2;
 	}
-	my %package_req = map { $_->{url} => $_->{$requirement_key}->{lowerBound} } @{$package->{dependencies}};
+	my %package_req = map { $_->{url} => $_->{requirement}->{range}->[0]->{lowerBound} } @{$package->{dependencies}};
 	my %urls = map { $_ => 1 } keys %spec_req, keys %package_req;
 	foreach my $url (sort keys %urls) {
 		if (!exists $spec_req{$url}) {
@@ -78,7 +76,7 @@ sub update {
 		my ($orig, $version) = ($1, $2);
 		ver_eq($tools_version, $version) ? $orig : "BuildRequires: swift >= $tools_version"
 	/me;
-	my %package_req = map { $_->{url} => $_->{$requirement_key}->{lowerBound} } @{$package->{dependencies}};
+	my %package_req = map { $_->{url} => $_->{requirement}->{range}->[0]->{lowerBound} } @{$package->{dependencies}};
 	$spec =~ s/^(\s*BuildRequires:\s*swiftpm\(([^)]+)\)(?:\s*>=\s*([\d\.]+))?[^\n]*\n)/
 		my ($orig, $url, $version) = ($1, $2, $3);
 		!defined $package_req{$url} ? ""

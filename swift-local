@@ -342,12 +342,31 @@ sub prepare_builddir {
 	open my $mypkg, '>', "$builddir/Package.swift" or die "Filed to open $builddir/Package.swift";
 	open my $origpkg, '<', "$path/Package.swift" or die "Failed to open $path/Package.swift";
 	my $bang = <$origpkg>;
-	my $swift4 = $bang =~ /swift-tools-version:4/;
+	my ($swift_tools_version) = $bang =~ /swift-tools-version:(\d)/;
 	print $mypkg $bang;
 	print $mypkg $_ while <$origpkg>;
 	close $origpkg;
 	print $mypkg qq/package.dependencies = []\n/;
-	if ($swift4) {
+	if ($swift_tools_version == 5) {
+		print $mypkg <<END;
+let regularTargets = Set(package.targets.filter { \$0.type == .regular }.map { \$0.name })
+for i in package.products.indices {
+	if let lib = package.products[i] as? Product.Library, lib.type == nil, !regularTargets.isDisjoint(with: lib.targets) {
+		package.products[i] = .library(name: "swift" + lib.name, type: .dynamic, targets: lib.targets)
+	}
+}
+let localTargets = Set(package.targets.map { \$0.name })
+for target in package.targets {
+	target.dependencies = target.dependencies.filter {
+		switch \$0 {
+			case ._targetItem: return true
+			case ._byNameItem(let name) where localTargets.contains(name): return true
+			default: return false
+		}
+	}
+}
+END
+	} elsif ($swift_tools_version == 4) {
 		print $mypkg <<END;
 for i in package.products.indices {
 	if let lib = package.products[i] as? Product.Library, lib.type == nil {
@@ -365,18 +384,6 @@ for target in package.targets {
 	}
 }
 END
-	} else {
-		flush $mypkg;
-		sync $mypkg;
-		my $package = describe($builddir);
-		my @swift_modules = grep { $_->{type} eq 'library' && $_->{module_type} eq 'SwiftTarget' } @{$package->{targets}};
-		if (@swift_modules) {
-			my $sm = join ', ', map qq/"$_->{name}"/, @swift_modules;
-			print $mypkg qq/let productModules = Set(products.flatMap { \$0.modules })\n/;
-			print $mypkg qq/for module in [$sm].filter({ !productModules.contains(\$0) }) {\n/;
-			print $mypkg qq/\tproducts.append(Product(name: "swift" + module, type: .Library(.Dynamic), modules: module))\n/;
-			print $mypkg qq/}\n/;
-		}
 	}
 	close $mypkg;
 
@@ -391,7 +398,7 @@ sub build_package {
 
 	my $swift_build = File::Spec->rel2abs("$buildbin/swift-build");
 	unless (@{$package->{targets}} == 1 && $package->{targets}->[0]->{type} eq 'system-target') {
-		unless (system("cd $builddir && $swift_build -Xswiftc -I$swiftdir -Xswiftc -I$swiftmoddir -Xlinker -L$swiftlibdir @ARGV") == 0) {
+		unless (system("cd $builddir && $swift_build --enable-llbuild-library=false -Xswiftc -I$swiftdir -Xswiftc -I$swiftmoddir -Xlinker -L$swiftlibdir @ARGV") == 0) {
 			die "Failed to swift build";
 		}
 	}
@@ -401,13 +408,12 @@ sub build_package {
 
 sub install_package {
 	my ($package, $config, $type) = @_;
-	if (@{$package->{targets}} == 1 && $package->{targets}->[0]->{type} eq 'system-target') {
-		return if $type eq 'runtime';
-		my $module = $package->{targets}->[0];
-		install_clang_module($module->{name}, $module->{path});
-	} else {
-		install_swift_package($package->{path}, $config, $type);
+	if ($type ne 'runtime') {
+		foreach my $module (grep { $_->{type} eq 'system-target' } @{$package->{targets}}) {
+			install_clang_module($module->{name}, $module->{path});
+		}
 	}
+	install_swift_package($package->{path}, $config, $type);
 	return;
 }
 
@@ -533,17 +539,16 @@ sub swift_build_tool {
 	my @dylibs;
 	while (my ($name, $dylib) = each %{$yaml->{commands}}) {
 		next unless $dylib->{tool} eq 'shell';
-		my ($linkname, $modulename) = $name =~ /^C\.(swift(.*))\.dylib$/;
+		my ($linkname, $modulename, $configuration) = $name =~ /^C\.(swift(.*))-(debug|release)\.dylib$/;
 		next unless $linkname;
-		my $module = $yaml->{commands}->{"C.$modulename.module"} or next;
+		my $module = $yaml->{commands}->{"C.$modulename-$configuration.module"} or next;
 		next unless $module->{tool} eq 'swift-compiler' && $module->{'is-library'} eq 'true';
 		my %inputs = map { $_ => 1 } @{$dylib->{inputs}};
 		next if grep !$inputs{$_}, @{$module->{objects}};
 		push @{$module->{'other-args'}}, '-module-link-name', $linkname;
 		push @dylibs, {
-			module  => $module,
-			dylib   => $dylib,
-			objects => { map { $_ => 1 } @{$module->{objects}} },
+			dylib  => $dylib,
+			inputs => { map { $_ => 1 } @{$dylib->{inputs}} },
 		};
 	}
 
@@ -552,10 +557,10 @@ sub swift_build_tool {
 		foreach my $dylib (@dylibs) {
 			next if $dylib->{dylib} == $link;
 			my $exists;
-			@{$link->{inputs}} = map { $dylib->{objects}->{$_} ? do { $exists++; () } : $_ } @{$link->{inputs}};
+			@{$link->{inputs}} = map { $dylib->{inputs}->{$_} ? do { $exists++; () } : $_ } @{$link->{inputs}};
 			if ($exists) {
 				push @{$link->{inputs}}, @{$dylib->{dylib}->{outputs}};
-				@{$link->{args}} = grep !$dylib->{objects}->{$_}, @{$link->{args}};
+				@{$link->{args}} = grep !$dylib->{inputs}->{$_}, @{$link->{args}};
 			}
 		}
 	}

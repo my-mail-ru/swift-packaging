@@ -1,5 +1,5 @@
 Name:       swift-packaging
-Version:    0.9
+Version:    0.10
 Release:    1%{?dist}
 Summary:    RPM Macros and Utilities for Swift Packaging
 BuildArch:  noarch
@@ -10,7 +10,7 @@ URL:        https://github.com/my-mail-ru/%{name}
 Source0:    https://github.com/my-mail-ru/%{name}/archive/%{version}.tar.gz#/%{name}-%{version}.tar.gz
 BuildRoot:  %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
-Requires:   swift
+Requires:   swift >= 5
 Requires:   perl
 Requires:   perl-JSON-XS
 Requires:   perl-YAML
@@ -50,6 +50,8 @@ rm -rf %{buildroot}
 
 
 %changelog
+* Fri Apr 19 2019 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.10-1
+- Swift 5.0
 * Thu Dec 7 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.9-1
 - Swift 4.0
 * Wed Apr 12 2017 - Aleksey Mashanov <a.mashanov@corp.mail.ru> - 0.8-1
